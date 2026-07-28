@@ -5,7 +5,7 @@ packages:
 # Single source of truth for shared tooling versions across the monorepo.
 # Packages reference these as "typescript": "catalog:".
 catalog:
-  "@types/node": ^26.1.2
+  "@types/node": ^26.1.1
   tsup: ^8.5.1
   typescript: ^6.0.3
   vitest: ^4.1.10
