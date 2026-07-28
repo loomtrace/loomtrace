@@ -90,6 +90,25 @@ function normalizeArgs<O, T>(
 }
 
 /**
+ * Turn `.run()` options into `.step()` options, for a run that turned out to be
+ * nested inside another one.
+ *
+ * A nested run is a span, not a trace, so `traceMetadata` has no trace of its
+ * own left to annotate. It is folded into the span's metadata rather than
+ * dropped, and rather than merged into the enclosing trace — a sub-agent
+ * declaring `{ session: "…" }` must not overwrite its caller's. Keys the caller
+ * also passed in `metadata` win, since those were meant for this span all
+ * along.
+ */
+function demoteRunOptions(
+  options: RunOptions | undefined,
+): StepOptions | undefined {
+  if (options?.traceMetadata === undefined) return options;
+  const { traceMetadata, ...rest } = options;
+  return { ...rest, metadata: { ...traceMetadata, ...rest.metadata } };
+}
+
+/**
  * Whether a callback's return value should be waited on before closing the
  * span.
  *
@@ -313,7 +332,29 @@ export class LoomTrace implements LoomTraceApi {
   ): T {
     const { options, fn } = normalizeArgs(optionsOrFn, maybeFn);
 
-    if (this.#destination === null || this.#shutDown) return fn(INERT_SPAN);
+    if (this.#destination === null) return fn(INERT_SPAN);
+
+    // A run inside a run is one execution calling another — an agent invoking a
+    // sub-agent — and it belongs in the caller's trace, as a child span that
+    // keeps `type: "run"` to mark where the boundary was. Item 3.5, DESIGN 4.10.
+    //
+    // The ambient frame is this instance's own, since the storage is per
+    // tracer: another tracer's run is not visible here and does not nest.
+    const frame = this.#context.getStore();
+    if (frame !== undefined && !frame.trace.sealed) {
+      // No `#shutDown` check on this path, for the same reason `.step()` has
+      // none: shutdown stops new traces, and this adds to one already open.
+      return this.#openChild(
+        frame.span,
+        name,
+        demoteRunOptions(options),
+        fn,
+        "run",
+        "starting a nested run",
+      );
+    }
+
+    if (this.#shutDown) return fn(INERT_SPAN);
 
     let root: RecordingSpan;
     try {
@@ -415,18 +456,23 @@ export class LoomTrace implements LoomTraceApi {
       },
     };
 
-    // Nested `.run()` inside a run currently starts a fresh, unrelated trace:
-    // its frame replaces the enclosing one for the duration of the callback.
-    // Whether that is right — sub-trace or child span — is item 3.5.
     return this.#openSpan(trace, null, name, options, "run", startedAt);
   }
 
-  /** Open a child of `parent`, on `parent`'s trace rather than on the ambient one. */
+  /**
+   * Open a child of `parent`, on `parent`'s trace rather than on the ambient
+   * one.
+   *
+   * `defaultType` and `doing` differ only for a nested `.run()`, which comes
+   * through here as a child span but is neither typed nor reported as a step.
+   */
   #openChild<T>(
     parent: RecordingSpan,
     name: string,
     options: StepOptions | undefined,
     fn: SpanCallback<T>,
+    defaultType: SpanType = "step",
+    doing = "starting a step",
   ): T {
     // The run this span belongs to is over and its trace has been handed to the
     // destination. Recording into it now would mutate an object we no longer
@@ -435,9 +481,9 @@ export class LoomTrace implements LoomTraceApi {
 
     let span: RecordingSpan;
     try {
-      span = this.#openSpan(parent.trace, parent.id, name, options, "step");
+      span = this.#openSpan(parent.trace, parent.id, name, options, defaultType);
     } catch (error) {
-      this.#reportInternal(error, "starting a step");
+      this.#reportInternal(error, doing);
       return fn(INERT_SPAN);
     }
 

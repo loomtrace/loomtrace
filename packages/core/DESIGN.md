@@ -394,6 +394,47 @@ it precedes every handler the caller attaches afterwards, and a span still
 closes before the code awaiting it resumes — which is what keeps a branch of a
 `Promise.all` inside its parent's lifetime rather than straddling the end of it.
 
+### 4.10 A run inside a run is a child span, not a second trace
+
+An agent calls another agent. Both were written as a `.run()` by whoever wrote
+them, and neither knows it is being called by the other — that is the whole
+point of composing agents. So `.run()` called while a run of the same tracer is
+ambient does **not** open a second trace: it opens a child span of the enclosing
+one, and the outer run keeps being the trace.
+
+Two traces would be the more literal reading of "one run, one trace", and it is
+the wrong one. The relationship between the caller and the callee *is* the
+thing worth recording — a sub-agent that took nine seconds is only interesting
+next to the supervisor that waited for it — and two files linked by nothing
+lose exactly that. It is also the convention everywhere else: nested
+`startActiveSpan` in OpenTelemetry, nested `traceable` in LangSmith, nested
+`traced` in Braintrust all continue the trace they are in. A library that
+surprised a framework author here would produce a pile of one-span traces from
+code that looks obviously nested.
+
+The nested span keeps `type: "run"`. A reader that wants the agent boundaries
+back looks for `type === "run" && parentId !== null`, so demoting the run to a
+span costs no information.
+
+What it does cost is `traceMetadata`: a nested run has no trace of its own to
+annotate. It is folded into that span's `metadata` rather than dropped, and
+deliberately *not* merged into the enclosing trace — a sub-agent declaring
+`{ session: … }` must not relabel the execution that called it. Where the same
+key appears in both, `metadata` wins, since it was meant for this span all
+along.
+
+Three edges follow from the rule rather than being separate decisions:
+
+- **Only the enclosing tracer's runs nest.** The context storage is per instance
+  (§4.7), so two frameworks that each embed loomtrace produce two traces, as
+  they already did for steps.
+- **A sealed trace cannot be joined.** A run started from a step that outlived
+  its run — the trace already handed over (§4.7) — starts a fresh trace instead
+  of vanishing. It is a genuine execution, and a trace nobody expected is better
+  than a silence nobody can find.
+- **`shutdown()` does not stop it.** Shutdown stops new traces from starting; a
+  nested run adds to a trace that is already open, exactly like a step (§4.5).
+
 ---
 
 ## 5. Destinations
@@ -472,7 +513,6 @@ These are known gaps, not oversights. Each is scheduled.
 
 | Question | Settled in |
 | --- | --- |
-| Nested `run()` inside a `run()` — sub-trace or child span? | item 3.5 |
 | Cancellation and timeouts (`AbortController`) — what status does a span get? | item 3.6 |
 | Process exits before a flush — is a crashed run recoverable at all? | item 4.4 |
 | Incremental span delivery, live tailing | later |

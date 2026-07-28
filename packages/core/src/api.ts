@@ -67,7 +67,12 @@ export interface SpanOptions {
 
 /** Options for `.run()`. */
 export interface RunOptions extends SpanOptions {
-  /** Run-level annotations, merged over `LoomTraceConfig.metadata`. */
+  /**
+   * Run-level annotations, merged over `LoomTraceConfig.metadata`.
+   *
+   * A nested run has no trace of its own, so these are folded into its span's
+   * `metadata` instead — `metadata` wins where the two collide.
+   */
   traceMetadata?: Record<string, JsonValue>;
 }
 
@@ -137,7 +142,11 @@ export interface LoomTraceApi {
    * re-thrown — loomtrace observes control flow, it does not participate in
    * it.
    *
-   * Nested `.run()` calls are covered by 3.5 and are not settled here.
+   * A `.run()` called inside another run of the same tracer does not start a
+   * second trace: it becomes a child span of the enclosing one, keeping
+   * `type: "run"` so a reader can see where one execution called another. Its
+   * `traceMetadata` is folded into that span's `metadata`, since there is no
+   * trace of its own to annotate.
    */
   run<T>(name: string, fn: (span: LoomSpan) => T): T;
   run<T>(name: string, options: RunOptions, fn: (span: LoomSpan) => T): T;
