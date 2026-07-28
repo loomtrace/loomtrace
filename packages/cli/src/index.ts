@@ -2,7 +2,7 @@
  * @loomtrace/cli — programmatic entry point.
  */
 
-/** Result of a CLI invocation. Extended on Day 6. */
+/** Result of a CLI invocation. Extended in item 6.1. */
 export interface CliResult {
   readonly exitCode: number;
   readonly stdout: string;
