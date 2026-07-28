@@ -490,25 +490,40 @@ export class LoomTrace implements LoomTraceApi {
 
     if (isThenable(result)) {
       // The callback is still running. Closing here would record the time it
-      // took to *start*, so the span ends with the promise instead. The
-      // returned promise is a new one — same value, same rejection, so nothing
-      // the caller can act on differs.
+      // took to *start*, so the span ends when the promise settles — watched
+      // from the side, with the caller's own promise handed straight back.
       //
-      // Via `Promise.resolve` rather than `result.then(...)` directly: a
-      // non-native thenable's `then` may return anything at all, including
-      // `undefined`, and returning that instead of the awaitable the caller
-      // expects would be the one way tracing could change a program's meaning.
-      // A native promise passes through `Promise.resolve` unchanged.
-      return Promise.resolve(result).then(
-        (value) => {
-          this.#close(span, "ok", undefined, value);
-          return value;
-        },
+      // Watching rather than chaining is what keeps the tracer out of the
+      // program's control flow, and it matters most in the concurrent code this
+      // is for. A derived `result.then(...)` is a second place the same
+      // rejection has to be handled, and only one of the two is being watched:
+      // a caller who keeps the original — `const p = send();
+      // tracer.step("send", () => p); await p;`, a step opened purely to time
+      // work awaited elsewhere — handles theirs while ours rejects with nobody
+      // attached, and an unhandled rejection ends a Node process by default. It
+      // also keeps `.run()` returning literally what its callback returned, a
+      // non-native thenable included. DESIGN 4.9.
+      //
+      // Ordering survives it: this handler is attached before `.step()` returns
+      // and so precedes anything the caller attaches afterwards, which is what
+      // keeps a branch of a `Promise.all` closing inside its parent's lifetime.
+      //
+      // What it costs is that observing a rejection marks it handled, so a step
+      // nobody awaited is recorded on its span rather than reaching
+      // `unhandledRejection` — a fair trade only while there is still a span to
+      // record it on, which is what `#reportLost` is for.
+      //
+      // Via `Promise.resolve` so a thenable's `then` returning something odd
+      // stays contained here; a native promise passes through unchanged, and
+      // the extra `then` call a non-native one sees is one it already tolerates
+      // from `await` and `Promise.all`.
+      void Promise.resolve(result).then(
+        (value) => this.#close(span, "ok", undefined, value),
         (error: unknown) => {
-          this.#close(span, "error", error);
-          throw error;
+          if (!this.#close(span, "error", error)) this.#reportLost(span, error);
         },
-      ) as T;
+      );
+      return result;
     }
 
     this.#close(span, "ok", undefined, result);
@@ -517,6 +532,7 @@ export class LoomTrace implements LoomTraceApi {
 
   /**
    * Close a span, and if it is a root span, finish the trace and hand it over.
+   * Returns whether the outcome was written down anywhere.
    *
    * Wrapped, because every call site is either returning a value to the caller
    * or re-throwing their exception, and a failure of ours here would replace
@@ -528,11 +544,12 @@ export class LoomTrace implements LoomTraceApi {
     status: "ok" | "error",
     error?: unknown,
     output?: unknown,
-  ): void {
+  ): boolean {
     try {
-      this.#closeSpan(span, status, error, output);
+      return this.#closeSpan(span, status, error, output);
     } catch (failure) {
       this.#reportInternal(failure, "closing a span");
+      return false;
     }
   }
 
@@ -545,12 +562,12 @@ export class LoomTrace implements LoomTraceApi {
     status: "ok" | "error",
     error?: unknown,
     output?: unknown,
-  ): void {
-    if (span.closed) return;
+  ): boolean {
+    if (span.closed) return false;
     span.closed = true;
 
     // Its trace is already at the destination — see `TraceState.sealed`.
-    if (span.trace.sealed) return;
+    if (span.trace.sealed) return false;
 
     const endedAt = now();
     const endTime = formatTimestamp(endedAt);
@@ -569,7 +586,7 @@ export class LoomTrace implements LoomTraceApi {
       node.output = output as JsonValue;
     }
 
-    if (span.parentId !== null) return;
+    if (span.parentId !== null) return true;
 
     const trace = span.trace.node;
     trace.endTime = endTime;
@@ -578,6 +595,7 @@ export class LoomTrace implements LoomTraceApi {
     span.trace.sealed = true;
 
     this.#emit(trace);
+    return true;
   }
 
   /** Hand a finished trace to the destination, absorbing anything it does about it. */
@@ -617,6 +635,31 @@ export class LoomTrace implements LoomTraceApi {
       new Error(`${name}.${method}() failed: ${describeCause(error)}`, {
         cause: error,
       }),
+    );
+  }
+
+  /**
+   * Report a failure that reached no span and no trace.
+   *
+   * This is the one leak in watching a promise instead of chaining onto it.
+   * Attaching a rejection handler marks the promise handled, so a step nobody
+   * awaited no longer reaches `unhandledRejection`; that is a fair trade while
+   * the error lands on its span, where it is easier to read than a stack on
+   * stderr. It stops being fair when there is no span left to write to — a step
+   * that outlived its run, whose trace was sealed and handed over before it
+   * failed. Without this the failure would be silent, and silence is the one
+   * outcome a tracer must never cause.
+   *
+   * Reported rather than re-thrown: re-throwing would land in a promise nobody
+   * holds, which is a process-terminating rejection raised by the tracer, on
+   * behalf of a caller who may well have handled the original themselves.
+   */
+  #reportLost(span: RecordingSpan, error: unknown): void {
+    this.#onError(
+      new Error(
+        `${JSON.stringify(span.node.name)} failed after its run had already finished, so the error is not in any trace: ${describeCause(error)}`,
+        { cause: error },
+      ),
     );
   }
 

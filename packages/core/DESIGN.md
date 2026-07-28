@@ -341,7 +341,58 @@ its root span closes, and a step still running at that moment stays `"unset"`
 in the delivered trace. Nothing writes into a trace after it has been handed
 over — the destination owns that object (§5.1) — so a step that closes late is
 dropped, and a step *opened* after its run finished runs untraced. Recovering
-those needs incremental delivery, which is deferred (§5.2).
+those needs incremental delivery, which is deferred (§5.2). A late step that
+*failed* is the one exception: its error is reported through `onError`, for the
+reason in §4.9.
+
+### 4.8 Concurrent steps
+
+`Promise.all` over three `.step()` calls is the shape agent code actually has —
+fan out to several tools, gather what comes back — and it is the shape that
+breaks a tracer keeping "the current span" in a field, because by the time the
+second branch opens a child the field belongs to the third.
+
+`AsyncLocalStorage` is what makes this work, and it needs nothing added to it:
+each branch's continuations carry the store that was current when the branch
+started, so children attach to their own branch no matter how the branches
+interleave. Concurrent `.run()` calls on one tracer are separate traces for the
+same reason. There is no "current span" to get wrong, which is the whole
+argument for the storage in §4.7.
+
+Branches are *not* waited for. A run ends when its own callback settles, and
+`Promise.race` and a rejected `Promise.all` both end it with siblings still in
+flight. Those stay `"unset"` in the delivered trace (§4.7) — which is a true
+statement about what happened: the work was abandoned, and nobody knows how it
+would have ended. Holding the trace open until every branch settles would mean
+a `Promise.race` never delivers a trace until its slowest loser finishes.
+
+### 4.9 A traced promise is the caller's promise
+
+`.run()` and `.step()` hand back the promise their callback returned — the same
+object, not a `.then()` chained onto it. loomtrace attaches an observer to
+close the span when it settles, and takes nothing else from it.
+
+Chaining would put the same rejection in two places, and only one of them is
+watched. A step opened to time work that is awaited elsewhere —
+`const p = send(); tracer.step("send", () => p); await p;` — leaves the caller
+handling theirs and the tracer's copy rejecting with nobody attached, and an
+unhandled rejection ends a Node process by default. A tracer that kills a
+program whose error handling was already correct has failed at the only thing
+§1 asks of it.
+
+The cost is the mirror image, and it is smaller. Observing a promise marks it
+handled, so a *fire-and-forget* step that rejects — `void tracer.step(…)`, its
+value discarded — no longer reaches `unhandledRejection`. It is recorded on its
+span instead, with name, message and cause chain, which is a better place to
+read it than a stack on stderr. Where that argument runs out is when the error
+reaches no span at all: a step that outlived its run, whose trace was sealed
+before it failed. Then it goes to `onError`, because a silently swallowed
+failure is the one outcome a tracer must never produce.
+
+Ordering survives this. The observer is attached before `.step()` returns, so
+it precedes every handler the caller attaches afterwards, and a span still
+closes before the code awaiting it resumes — which is what keeps a branch of a
+`Promise.all` inside its parent's lifetime rather than straddling the end of it.
 
 ---
 
