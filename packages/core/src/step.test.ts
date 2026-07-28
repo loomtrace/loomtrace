@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { LoomSpan } from "./api.js";
-import type { LoomDestination } from "./destination.js";
+import type { LoomDestination } from "./destinations/destination.js";
 import { LoomTrace } from "./loomtrace.js";
 import type { SpanNode, TraceNode } from "./schema.js";
 

@@ -1,7 +1,7 @@
 import { describe, expectTypeOf, it } from "vitest";
 
 import type { DestinationSpec, LoomDestination } from "./destination.js";
-import type { TraceNode } from "./schema.js";
+import type { TraceNode } from "../schema.js";
 
 /**
  * These are type assertions, not behaviour tests — `destination.ts` has no

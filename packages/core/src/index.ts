@@ -12,9 +12,14 @@ export type {
   StepOptions,
 } from "./api.js";
 
-export type { DestinationSpec, LoomDestination } from "./destination.js";
+export type { DestinationSpec, LoomDestination } from "./destinations/destination.js";
+
+export { LocalDestination } from "./destinations/local-destination.js";
+export type { LocalDestinationOptions } from "./destinations/local-destination.js";
 
 export { LoomTrace } from "./loomtrace.js";
+
+export { SilentDestination } from "./destinations/silent-destination.js";
 
 export type {
   JsonValue,

@@ -24,8 +24,9 @@ import type {
   StepOptions,
 } from "./api.js";
 import { durationMs, formatTimestamp, now, type EpochNanos } from "./clock.js";
-import type { DestinationSpec, LoomDestination } from "./destination.js";
+import type { DestinationSpec, LoomDestination } from "./destinations/destination.js";
 import { describeCause, isCancellation, toSpanError } from "./errors.js";
+import { LocalDestination } from "./destinations/local-destination.js";
 import {
   createSpanId,
   createTraceId,
@@ -157,16 +158,10 @@ function resolveDestination(
 ): LoomDestination | null {
   if (spec === undefined || spec === "silent") return null;
 
-  if (spec === "local") {
-    // Item 4.2. Until then, saying so once is better than writing nowhere in
-    // silence — this is the one case where the user did ask for their traces.
-    onError(
-      new Error(
-        'destination "local" is not implemented yet (item 4.2); traces are being discarded',
-      ),
-    );
-    return null;
-  }
+  // The default directory, resolved against `process.cwd()` at construction
+  // time. A caller who wants a different one passes a `LocalDestination`
+  // instance directly instead of the shorthand.
+  if (spec === "local") return new LocalDestination();
 
   if (typeof spec.write !== "function") {
     onError(

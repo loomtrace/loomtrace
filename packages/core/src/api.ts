@@ -6,7 +6,7 @@
  * argued about while changing it is still free.
  */
 
-import type { DestinationSpec } from "./destination.js";
+import type { DestinationSpec } from "./destinations/destination.js";
 import type { JsonValue, SpanType } from "./schema.js";
 
 /**
@@ -196,8 +196,10 @@ export interface LoomTraceApi {
    * awaits the writes still in flight, then the destination's own
    * `flush()`, if it has one.
    *
-   * Semantics on process exit are decided in 4.4; the signature is here
-   * because it is part of the API shape.
+   * loomtrace never calls this itself, on exit or otherwise — see
+   * `DESIGN.md`, section 5.4. The embedding framework calls it at its own
+   * natural teardown point; a process killed before that runs loses whatever
+   * had not yet reached the destination.
    */
   flush(): Promise<void>;
 

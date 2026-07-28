@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { describeCause, toSpanError } from "./errors.js";
 import { LoomTrace } from "./loomtrace.js";
-import type { LoomDestination } from "./destination.js";
+import type { LoomDestination } from "./destinations/destination.js";
 import type { TraceNode } from "./schema.js";
 
 function collector(): LoomDestination & { traces: TraceNode[] } {

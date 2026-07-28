@@ -14,7 +14,7 @@ Two different kinds of thing are described here, with very different stability:
 
 The source of truth for the types themselves is
 [`src/schema.ts`](./src/schema.ts), [`src/api.ts`](./src/api.ts),
-[`src/destination.ts`](./src/destination.ts) and
+[`src/destinations/destination.ts`](./src/destinations/destination.ts) and
 [`src/version.ts`](./src/version.ts). This document explains *why* they look
 the way they do; where prose and types disagree, the types win.
 
@@ -520,7 +520,7 @@ sealed while it is still open. That span stays `"unset"` (§4.8), not
 A destination is the one part of loomtrace that someone else is expected to
 implement. `"silent"` and `"local"` ship here; `"cloud"` comes later; a
 framework may want to route traces into its own logging pipeline instead. See
-[`src/destination.ts`](./src/destination.ts).
+[`src/destinations/destination.ts`](./src/destinations/destination.ts).
 
 ```ts
 interface LoomDestination {
@@ -583,6 +583,66 @@ a process that dies mid-run and for live tailing, and neither is in scope yet.
 It arrives later as an additional *optional* method that existing destinations
 can ignore, which is exactly why the required surface is kept to `write` now.
 
+### 5.3 The two destinations shipped here
+
+`SilentDestination` (`src/destinations/silent-destination.ts`) and `LocalDestination`
+(`src/destinations/local-destination.ts`) are the concrete classes behind the two string
+shorthands.
+
+`SilentDestination` is *not* what `destination: "silent"` actually uses.
+`resolveDestination()` special-cases that string straight to `null`, and stays
+that way, because `null` is strictly cheaper: with no destination object to
+call, `.run()`/`.step()` skip id generation, timestamping and span
+construction entirely (§4.5), rather than building a real span and then
+discarding it in `write()`. `SilentDestination` exists for the rarer case where
+a concrete `LoomDestination` *value* is required — composing destinations,
+testing against the interface — and is a genuine no-op sink, just not a free
+one.
+
+`LocalDestination` writes each trace to `<dir>/<trace.id>.json`, pretty-printed
+— its reader is a human or `@loomtrace/cli` during development, not a
+production system, so readability wins over a few extra bytes. `dir` defaults
+to `.loomtrace/traces` under `process.cwd()` and is resolved once, at
+construction time; changing it means constructing the destination directly —
+`new LocalDestination({ dir })` — rather than reaching for a shorthand that
+takes no arguments. The directory is created before every write rather than
+once up front, so a directory removed mid-process heals on the next trace
+instead of failing for the rest of the run — cheap insurance for a call that
+is already a filesystem round trip.
+
+Neither class implements `flush()` or `shutdown()`. Both are unnecessary here:
+`LocalDestination.write()` already resolves only once its file is durably
+written, and `LoomTrace.flush()` already awaits every in-flight `write()` call
+before doing anything else (§5.1) — a destination gets the optional lifecycle
+methods only if it buffers *beyond* what a single `write()` covers, which
+neither of these does.
+
+### 5.4 No process-exit hook — `flush()`/`shutdown()` are the whole answer
+
+Resolves item 4.4. loomtrace does not install `process.on("exit")`,
+`"beforeExit"`, `"SIGINT"`, or any other process-level hook to flush on the
+embedding process's behalf. Two reasons, either one sufficient on its own:
+
+- **It is not loomtrace's process to hook.** §1 already rules out global side
+  effects a transitive dependency has no business causing; a signal handler is
+  exactly that, and two tracer instances — or two frameworks that each embed
+  loomtrace — registering their own would compete over exit behaviour neither
+  of them owns.
+- **It would not reliably help even if installed.** `process.on("exit")` runs
+  synchronously only; Node does not run additional async work scheduled from
+  it, so an async `flush()` could never actually complete there.
+  `"beforeExit"` fires only when the event loop would otherwise end on its
+  own — never on an explicit `process.exit()` or a fatal signal, which are
+  precisely the two cases where losing unflushed traces would matter most.
+
+So the answer is the API surface already in place: the embedding framework
+calls `flush()` or `shutdown()` at its own natural teardown point — a server's
+shutdown handler, the end of a CLI command — and if the process is killed
+before that runs, whatever had not yet reached the destination is lost. That is
+the same loss `status: "unset"` already documents for a run that never
+finished (§2.5, §4.8); a crash losing its last few traces is not a new failure
+mode, just this one happening one level up.
+
 ---
 
 ## 6. Deliberately unsettled
@@ -591,7 +651,6 @@ These are known gaps, not oversights. Each is scheduled.
 
 | Question | Settled in |
 | --- | --- |
-| Process exits before a flush — is a crashed run recoverable at all? | item 4.4 |
 | Incremental span delivery, live tailing | later |
 | Manually-managed spans that outlive their function (streaming) | later |
 | Sampling, and truncating large `input`/`output` payloads | unscheduled |

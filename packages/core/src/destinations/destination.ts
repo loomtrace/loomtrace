@@ -8,11 +8,12 @@
  * the guarantees in both directions are written out in `DESIGN.md`, section
  * 5.1.
  *
- * Types only, like `schema.ts` and `api.ts`. `SilentDestination` and
- * `LocalDestination` are implemented in items 4.1 and 4.2.
+ * Types only, like `schema.ts` and `api.ts`. `SilentDestination`
+ * (`silent-destination.ts`) and `LocalDestination` (`local-destination.ts`)
+ * implement it, items 4.1 and 4.2.
  */
 
-import type { TraceNode } from "./schema.js";
+import type { TraceNode } from "../schema.js";
 
 /**
  * A sink for finished traces.

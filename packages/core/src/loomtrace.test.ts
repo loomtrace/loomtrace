@@ -1,6 +1,10 @@
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
-import type { LoomDestination } from "./destination.js";
+import type { LoomDestination } from "./destinations/destination.js";
 import { LoomTrace } from "./loomtrace.js";
 import type { TraceNode } from "./schema.js";
 import { SCHEMA_VERSION } from "./version.js";
@@ -307,14 +311,24 @@ describe("LoomTrace — when nothing is being recorded", () => {
     ).toThrow(boom);
   });
 
-  it('reports that "local" is not implemented yet, once, and keeps working', () => {
+  it('resolves destination "local" to a real LocalDestination', async () => {
+    const dir = await mkdtemp(join(tmpdir(), "loomtrace-"));
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(dir);
     const onError = vi.fn();
-    const tracer = new LoomTrace({ destination: "local", onError });
 
-    expect(tracer.run("local", () => "value")).toBe("value");
-    expect(onError).toHaveBeenCalledTimes(1);
-    expect(onError.mock.calls[0]![0]).toBeInstanceOf(Error);
-    expect((onError.mock.calls[0]![0] as Error).message).toMatch(/not implemented yet/);
+    try {
+      const tracer = new LoomTrace({ destination: "local", onError });
+
+      tracer.run("local", () => "value");
+      await tracer.flush();
+
+      expect(onError).not.toHaveBeenCalled();
+      const files = await readdir(join(dir, ".loomtrace", "traces"));
+      expect(files).toHaveLength(1);
+    } finally {
+      cwd.mockRestore();
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 
