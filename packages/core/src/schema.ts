@@ -88,6 +88,23 @@ export interface SpanError {
   message: string;
   /** Stack trace, when the thrown value carried one. */
   stack?: string;
+  /**
+   * The error this one wrapped — `new Error(msg, { cause })` — recorded
+   * recursively, a few levels deep.
+   *
+   * The outermost error of a chain is almost never the one that explains the
+   * failure: "generation failed" wraps "request failed" wraps "ECONNREFUSED",
+   * and only the last of those is actionable.
+   */
+  cause?: SpanError;
+  /**
+   * The individual failures of an `AggregateError`, as produced by
+   * `Promise.any` — a retry across several providers, most often.
+   *
+   * Without this, such a span records only "All promises were rejected", which
+   * says that everything failed but nothing about why.
+   */
+  errors?: SpanError[];
 }
 
 /**

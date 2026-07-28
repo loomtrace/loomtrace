@@ -152,6 +152,28 @@ can use its own vocabulary without patching our file. LangSmith shipped a
 closed union here and later deprecated it in favour of a raw string; this is
 that lesson applied up front.
 
+### 2.7 A failure is captured structurally, and to the bottom of the chain
+
+`SpanError` is `name` / `message` / `stack`, plus `cause` and `errors`, and the
+last two are there because the top of a failure is rarely the informative part:
+"generation failed" wraps "request failed" wraps `ECONNREFUSED`, and only the
+last one can be acted on. `errors` does the same job for the `AggregateError`
+that comes out of `Promise.any`, which otherwise records "All promises were
+rejected" — everything failed, nothing about why. The chain is followed five
+levels deep, with a cycle guard.
+
+The thrown value itself is never stored: it is arbitrary JavaScript and usually
+not serializable.
+
+That "arbitrary" is meant literally, and it is why the capture code is written
+defensively. `catch` catches anything — a string, `undefined`, a `Symbol`, a
+plain object, an object whose `message` is a getter that throws, an `Error`
+from another realm that fails `instanceof Error`. Errors are recognized by
+shape rather than by prototype, every property read tolerates a throw, and a
+thrown payload is recorded as JSON rather than as `[object Object]`. A tracer
+that crashes while recording a failure crashes in the one code path that is
+already on fire.
+
 ---
 
 ## 3. Schema versioning
@@ -265,6 +287,13 @@ function would need, are deferred. Adding them is additive.
 still return — and records nothing, so the embedding framework can forward a
 user flag directly instead of branching everywhere.
 
+"Records nothing" is meant literally, and it is the same code path for
+`enabled: false` and for `"silent"`: no ids are generated, no span object is
+built, nothing is timed. The callback receives a shared, frozen handle whose
+`id` and `traceId` are OpenTelemetry's invalid ids — all zeros — so code that
+logs them prints something recognizably absent rather than a plausible id that
+leads nowhere.
+
 `onError` is the only channel through which loomtrace reports its own failures.
 It defaults to a single `console` warning rather than to silence: swallowing
 errors is required, hiding them is not.
@@ -272,6 +301,47 @@ errors is required, hiding them is not.
 `flush()` awaits the writes still in flight and then the destination's own
 `flush()`. `shutdown()` flushes and releases resources; the instance is
 unusable afterwards.
+
+`shutdown()` stops new runs from starting, but not steps: a step only ever adds
+to a run that is already open, and a trace that loses its children halfway
+through is worse than one that finishes after the lights went out.
+
+### 4.6 What a failure does to the spans around it
+
+The span whose callback threw gets `status: "error"` and the error; the
+exception then propagates unchanged, same instance, same stack.
+
+A parent's status follows *its own* callback, not its children's. A step that
+fails inside a `try` its run recovers from leaves the run `"ok"` — which is
+what actually happened: the agent retried and succeeded. An error that escapes
+the run marks both.
+
+Nothing loomtrace does can replace that exception with one of its own. Opening
+a span, closing a span, writing a trace — each is wrapped, and a failure in any
+of them ends up at `onError` while the caller's control flow continues exactly
+as it would have without a tracer. The cost of a bug in here is a missing
+trace, never a failed run.
+
+### 4.7 How `.step()` finds its parent
+
+`AsyncLocalStorage`, one storage **per tracer instance** rather than one per
+module. A module-level store would be a global by another name: two frameworks
+that each embed loomtrace would see each other's runs, and `.step()` on one
+tracer could attach to a run opened by the other. It also would not survive
+what actually happens in a dependency tree — two copies of this package at
+different versions, each with its own module scope. A tracer with no run of its
+own open therefore treats an ambient run belonging to a *different* tracer as
+no run at all.
+
+A span is appended to `spans` when it opens, not when it closes, so a span that
+never finishes is still in the trace as `status: "unset"`.
+
+That is also what a fire-and-forget step becomes: the trace is **sealed** when
+its root span closes, and a step still running at that moment stays `"unset"`
+in the delivered trace. Nothing writes into a trace after it has been handed
+over — the destination owns that object (§5.1) — so a step that closes late is
+dropped, and a step *opened* after its run finished runs untraced. Recovering
+those needs incremental delivery, which is deferred (§5.2).
 
 ---
 

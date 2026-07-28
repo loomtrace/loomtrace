@@ -13,6 +13,8 @@ export type {
 
 export type { DestinationSpec, LoomDestination } from "./destination.js";
 
+export { LoomTrace } from "./loomtrace.js";
+
 export type {
   JsonValue,
   SpanError,
