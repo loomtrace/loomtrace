@@ -174,6 +174,13 @@ thrown payload is recorded as JSON rather than as `[object Object]`. A tracer
 that crashes while recording a failure crashes in the one code path that is
 already on fire.
 
+### 2.8 `cancelled` is a flag on a failure, not a status of its own
+
+A span cut short from outside — an `AbortSignal` fired, a deadline elapsed —
+gets `status: "error"`, the error that carried it, and `cancelled: true`. The
+field is optional and only ever `true`; absent means not cancelled. The
+argument for a flag rather than a fourth `status` is in §4.11.
+
 ---
 
 ## 3. Schema versioning
@@ -435,6 +442,77 @@ Three edges follow from the rule rather than being separate decisions:
 - **`shutdown()` does not stop it.** Shutdown stops new traces from starting; a
   nested run adds to a trace that is already open, exactly like a step (§4.5).
 
+### 4.11 Cancellation is a flag on an error, not a status of its own
+
+An agent that gives a tool call two seconds and moves on when it does not
+answer is working correctly. Recording that under the same heading as
+`TypeError: x is not a function` makes every error count useless: the number
+that matters — how often did this agent actually break — cannot be recovered
+from a trace that files both the same way.
+
+So a cancelled span keeps `status: "error"` and gains `cancelled: true`. It is
+a failure, and pretending otherwise loses information too: the work did not
+produce its result, and the error that carried it is recorded like any other,
+with its cause chain intact. What the flag adds is the distinction between
+*cut short* and *wrong*, and a reader counting real breakages writes
+`status === "error" && !cancelled`.
+
+Three alternatives, and why not:
+
+- **A fourth `SpanStatus`.** The single most invasive change available: every
+  reader that switches on status breaks, the CLI has to learn a fourth colour,
+  and the schema's own rule (§3) makes it a version bump for something that is
+  additive information. OpenTelemetry has three status codes and puts
+  cancellation in the exception it records; that is the same trade made once
+  already, by the project with the most readers to break.
+- **`status: "unset"`.** Tempting, since "abandoned" sounds like "no answer".
+  But `"unset"` means loomtrace *does not know* how the work ended (§2.5), and
+  a cancellation is known: a time, a duration, and a reason. Collapsing the two
+  would make an unset span mean two different things and leave a reader unable
+  to tell a killed container from a satisfied deadline.
+- **Metadata.** `metadata: { cancelled: true }` needs no schema change at all,
+  and it is exactly where a convention goes to be spelled three different ways
+  by three frameworks. Cancellation is common enough to belong in the format.
+
+**How it is detected.** Two independent signals, because neither is sufficient:
+
+1. **The thrown value's shape.** `AbortError` and `TimeoutError` by name,
+   `ABORT_ERR` and `ERR_CANCELED` by code — matched by shape rather than by
+   class, for the same reason as §2.7: an aborted `fetch` rejects with a
+   `DOMException` in one runtime and Node's own `AbortError` in another, and
+   neither survives `instanceof` across a realm. The `cause` chain is followed
+   at the same depth, because `new Error("generation failed", { cause: abortError })`
+   is a framework doing its job, and the outermost error has no trace of the
+   abort left in it. An `AggregateError` counts only when *every* one of its
+   failures was a cancellation — `Promise.any` where one provider was aborted
+   and two returned garbage is a failure, and the two are the part worth
+   reading.
+2. **An `AbortSignal` passed in options.** Optional, read once, only if the
+   callback failed. This is what covers `controller.abort(reason)` with a
+   reason of the caller's own, which surfaces as an ordinary error with nothing
+   abort-shaped about it — and the real-world case where aborting mid-stream
+   surfaces as `TypeError: terminated` from the socket. A caller who passes the
+   signal has stated that this work was under its control, so an aborted signal
+   is taken at its word.
+
+Consulted *only* on failure, which is what keeps a signal shared across a whole
+request from retroactively marking the steps that finished before it fired. And
+a callback that catches its own abort and returns what it managed to collect is
+`"ok"`: it did not fail, and loomtrace does not overrule a callback about its
+own outcome.
+
+**What loomtrace does not do with a signal:** subscribe to it, abort anything,
+or close a span when it fires. `AbortSignalLike` is structural — `{ aborted }`
+and nothing else — which both states that and lets a polyfilled or cross-realm
+signal through. A listener would be a leak to manage and would end a span while
+its callback was still running, and a span's lifetime is its callback's (§4.1).
+
+**The other timeout shape is unchanged.** `Promise.race([work, deadline])`
+aborts nothing: the run stops waiting, the step keeps running, and the trace is
+sealed while it is still open. That span stays `"unset"` (§4.8), not
+`cancelled` — nobody ever learned how it ended, which is precisely what
+`"unset"` says.
+
 ---
 
 ## 5. Destinations
@@ -513,7 +591,6 @@ These are known gaps, not oversights. Each is scheduled.
 
 | Question | Settled in |
 | --- | --- |
-| Cancellation and timeouts (`AbortController`) — what status does a span get? | item 3.6 |
 | Process exits before a flush — is a crashed run recoverable at all? | item 4.4 |
 | Incremental span delivery, live tailing | later |
 | Manually-managed spans that outlive their function (streaming) | later |

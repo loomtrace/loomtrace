@@ -47,6 +47,19 @@ export interface LoomTraceConfig {
   onError?: (error: Error) => void;
 }
 
+/**
+ * The part of an `AbortSignal` loomtrace reads — and the whole of it.
+ *
+ * Structural rather than the `AbortSignal` global so that a polyfill, a signal
+ * from another realm, or any object carrying an `aborted` flag is accepted, and
+ * so that the type itself states how little is used. A real `AbortSignal`
+ * satisfies it.
+ */
+export interface AbortSignalLike {
+  /** Whether the signal has fired. */
+  readonly aborted: boolean;
+}
+
 /** Per-call options shared by `.run()` and `.step()`. */
 export interface SpanOptions {
   /** What kind of work this is. Defaults to `"run"` for runs, `"step"` for steps. */
@@ -63,6 +76,20 @@ export interface SpanOptions {
   input?: JsonValue;
   /** Annotations for this span: model, attempt number, cost, cache hit. */
   metadata?: Record<string, JsonValue>;
+  /**
+   * The signal governing this work, if it has one.
+   *
+   * Read once, and only if the callback failed: a signal that had fired by then
+   * marks the span `cancelled` (see `SpanNode.cancelled`). Passing it is
+   * optional — an abort that arrives as a recognizable `AbortError` or
+   * `TimeoutError` is detected without it — and it is what makes detection
+   * reliable for `controller.abort(reason)` with a reason of the caller's own,
+   * which surfaces as an ordinary error with nothing abort-shaped about it.
+   *
+   * loomtrace never subscribes to the signal, never aborts anything, and never
+   * closes a span because one fired: a span's lifetime is its callback's.
+   */
+  signal?: AbortSignalLike;
 }
 
 /** Options for `.run()`. */

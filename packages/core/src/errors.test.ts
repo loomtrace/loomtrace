@@ -245,6 +245,28 @@ describe("toSpanError — values that are not errors at all", () => {
     expect(() => toSpanError(bare)).not.toThrow();
     expect(toSpanError(bare).name).toBe("Object");
   });
+
+  it("survives a constructor that cannot be read", () => {
+    const hostile = {};
+    Object.defineProperty(hostile, "constructor", {
+      get(): never {
+        throw new Error("no constructor for you");
+      },
+    });
+
+    expect(toSpanError(hostile).name).toBe("Object");
+  });
+
+  it("falls back when an error's own name and message are not strings", () => {
+    // An `Error` by prototype, so it never reaches the duck-typed branch, but
+    // with fields somebody overwrote with values the schema cannot hold.
+    const mangled = Object.assign(new Error("original"), {
+      name: 42,
+      message: { code: "rate_limit" },
+    });
+
+    expect(toSpanError(mangled)).toMatchObject({ name: "Error", message: "" });
+  });
 });
 
 describe("describeCause", () => {
@@ -255,6 +277,12 @@ describe("describeCause", () => {
   it("falls back to a string form for anything else", () => {
     expect(describeCause(404)).toBe("404");
     expect(describeCause(Symbol("s"))).toBe("Symbol(s)");
+  });
+
+  it("falls back to a string form for an error with no readable message", () => {
+    const mangled = Object.assign(new Error("original"), { message: 500 });
+
+    expect(describeCause(mangled)).toBe("Error: 500");
   });
 });
 
@@ -329,6 +357,56 @@ describe("LoomTrace — an exception is never swallowed or replaced", () => {
 
     expect((onError.mock.calls[0]![0] as Error).message).toBe(
       "internal failure while starting a run: no entropy",
+    );
+  });
+
+  it("runs a step untraced when opening its span fails", () => {
+    const destination = collector();
+    const onError = vi.fn();
+    const tracer = new LoomTrace({ destination, onError });
+
+    tracer.run("root", () => {
+      // Entropy runs out after the run has already opened, so the failure is
+      // the child's alone.
+      const randomValues = vi
+        .spyOn(globalThis.crypto, "getRandomValues")
+        .mockImplementation(() => {
+          throw new Error("no entropy");
+        });
+
+      try {
+        expect(tracer.step("child", () => "value")).toBe("value");
+      } finally {
+        randomValues.mockRestore();
+      }
+    });
+
+    expect((onError.mock.calls[0]![0] as Error).message).toBe(
+      "internal failure while starting a step: no entropy",
+    );
+    // The run itself is intact and delivered; only the step is missing from it.
+    expect(destination.traces[0]!.spans.map((s) => s.name)).toEqual(["root"]);
+    expect(destination.traces[0]!.status).toBe("ok");
+  });
+
+  it("returns the callback's value when closing the span fails", () => {
+    const onError = vi.fn();
+    // A destination whose return value cannot even be inspected: reading `then`
+    // to find out whether the write was async throws. That happens inside the
+    // close, which is the one place a failure of ours could reach the caller.
+    const hostile = {
+      get then(): never {
+        throw new Error("hostile thenable");
+      },
+    };
+    const tracer = new LoomTrace({
+      destination: { write: () => hostile as unknown as Promise<void> },
+      onError,
+    });
+
+    expect(tracer.run("root", () => "value")).toBe("value");
+    expect((onError.mock.calls[0]![0] as Error).message).toBe(
+      "internal failure while closing a span: hostile thenable",
     );
   });
 

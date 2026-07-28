@@ -146,6 +146,21 @@ export interface SpanNode {
   /** Present iff `status` is `"error"`. */
   error?: SpanError;
   /**
+   * Set when the work was cut short from outside — an `AbortSignal` fired, a
+   * deadline elapsed — rather than failing on its own terms.
+   *
+   * Only ever `true`, and only alongside `status: "error"`. Absent means "not
+   * cancelled", so there is exactly one way to say it and the flag costs
+   * nothing on the spans that do not need it.
+   *
+   * A cancellation is still a failure: the work did not produce its result, and
+   * the error that carried it is recorded like any other. It is a different
+   * *kind* of failure from a bug, though — an agent that abandons a slow tool
+   * call after two seconds and retries with another is working correctly — so a
+   * reader counting real breakages wants `status === "error" && !cancelled`.
+   */
+  cancelled?: true;
+  /**
    * Arbitrary caller-supplied annotations: model name, token counts, cost,
    * retry attempt, whatever the embedding framework finds worth recording.
    *
@@ -186,6 +201,11 @@ export interface TraceNode {
   durationMs?: number;
   /** Terminal state of the run as a whole. */
   status: SpanStatus;
+  /**
+   * Set when the run itself was cancelled — mirrors the root span's
+   * `cancelled`, the way `status` and `durationMs` mirror its.
+   */
+  cancelled?: true;
   /** Every span in the run, flat and unordered. */
   spans: SpanNode[];
   /** Run-level annotations: environment, release, session id, user id. */

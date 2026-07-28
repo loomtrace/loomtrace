@@ -15,6 +15,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import type {
+  AbortSignalLike,
   LoomSpan,
   LoomTraceApi,
   LoomTraceConfig,
@@ -24,7 +25,7 @@ import type {
 } from "./api.js";
 import { durationMs, formatTimestamp, now, type EpochNanos } from "./clock.js";
 import type { DestinationSpec, LoomDestination } from "./destination.js";
-import { describeCause, toSpanError } from "./errors.js";
+import { describeCause, isCancellation, toSpanError } from "./errors.js";
 import {
   createSpanId,
   createTraceId,
@@ -106,6 +107,23 @@ function demoteRunOptions(
   if (options?.traceMetadata === undefined) return options;
   const { traceMetadata, ...rest } = options;
   return { ...rest, metadata: { ...traceMetadata, ...rest.metadata } };
+}
+
+/**
+ * Whether the signal governing a span had already fired.
+ *
+ * Read defensively and only once, at close time: the object comes from the
+ * caller, `aborted` may be a getter on a proxy, and a tracer that throws while
+ * recording a failure fails in the worst possible place. A signal it cannot
+ * read is a signal that says nothing.
+ */
+function wasAborted(signal: AbortSignalLike | undefined): boolean {
+  if (signal === undefined) return false;
+  try {
+    return signal.aborted;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -197,6 +215,8 @@ class RecordingSpan implements LoomSpan {
   readonly trace: TraceState;
   /** @internal When the span started, for its duration. */
   readonly startedAt: EpochNanos;
+  /** @internal The signal governing this work, consulted if the callback fails. */
+  readonly signal: AbortSignalLike | undefined;
   /** @internal Whether `setOutput` was called, which suppresses the implicit one. */
   outputSet = false;
   /** @internal Guards against a span being closed twice. */
@@ -208,6 +228,7 @@ class RecordingSpan implements LoomSpan {
     node: SpanNode,
     trace: TraceState,
     startedAt: EpochNanos,
+    signal: AbortSignalLike | undefined,
     startChild: StartChild,
   ) {
     this.id = node.id;
@@ -216,6 +237,7 @@ class RecordingSpan implements LoomSpan {
     this.node = node;
     this.trace = trace;
     this.startedAt = startedAt;
+    this.signal = signal;
     this.#startChild = startChild;
   }
 
@@ -514,7 +536,13 @@ export class LoomTrace implements LoomTraceApi {
     // the trace — as `status: "unset"`, which is more informative than a gap.
     trace.node.spans.push(node);
 
-    return new RecordingSpan(node, trace, startedAt, this.#startChild);
+    return new RecordingSpan(
+      node,
+      trace,
+      startedAt,
+      options?.signal,
+      this.#startChild,
+    );
   }
 
   /**
@@ -626,6 +654,19 @@ export class LoomTrace implements LoomTraceApi {
 
     if (status === "error") {
       node.error = toSpanError(error);
+
+      // Item 3.6, DESIGN 4.11. Two independent ways of learning the same thing,
+      // because neither is sufficient alone: the thrown value carries the news
+      // when the abort surfaces as an `AbortError`, and the signal carries it
+      // when the caller aborted with a reason of their own, which arrives as an
+      // ordinary error with nothing recognizable about it.
+      //
+      // Consulted only on failure. A signal that fires after the work already
+      // succeeded — one signal shared by a whole request, aborted as it winds
+      // down — has nothing to say about a span that finished before it.
+      if (isCancellation(error) || wasAborted(span.signal)) {
+        node.cancelled = true;
+      }
     } else if (!span.outputSet && output !== undefined) {
       // Recorded as-is. Values that will not survive `JSON.stringify` are the
       // destination boundary's problem to handle defensively — see DESIGN 2.4.
@@ -638,6 +679,7 @@ export class LoomTrace implements LoomTraceApi {
     trace.endTime = endTime;
     trace.durationMs = elapsedMs;
     trace.status = status;
+    if (node.cancelled === true) trace.cancelled = true;
     span.trace.sealed = true;
 
     this.#emit(trace);

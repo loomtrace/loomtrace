@@ -159,6 +159,82 @@ function capture(thrown: unknown, depth: number, seen: Set<object>): SpanError {
 }
 
 /**
+ * Error names that mean "the work was cut short", not "the work was wrong".
+ *
+ * Matched by name rather than by class, for the reason `isErrorLike` exists: an
+ * aborted `fetch` rejects with a `DOMException` in one runtime and with Node's
+ * own `AbortError` in another, and neither survives `instanceof` across a realm
+ * boundary. Names are what those implementations do agree on.
+ *
+ * `TimeoutError` is the name `AbortSignal.timeout()` uses, and also the name
+ * most timeout helpers give their own error. Both meanings are the one wanted
+ * here: a deadline elapsed and the work was abandoned.
+ */
+const CANCELLATION_NAMES = new Set([
+  "AbortError", // `AbortSignal.abort()`, fetch, Node
+  "TimeoutError", // `AbortSignal.timeout()`, timeout helpers
+  "CanceledError", // axios
+  "CancelledError", // the same word, spelled the other way
+]);
+
+/**
+ * Error codes that mean the same thing.
+ *
+ * Read as strings only, which conveniently skips `DOMException.code` — a legacy
+ * numeric field where `AbortError` is `20`, and not something to match on.
+ */
+const CANCELLATION_CODES = new Set([
+  "ABORT_ERR", // Node's `AbortError`, `fs.promises` with a signal
+  "ERR_CANCELED", // axios
+]);
+
+/**
+ * Whether a thrown value says the work was cancelled rather than broken.
+ *
+ * The chain is followed because wrapping is what actually happens to an abort
+ * on its way up: `new Error("generation failed", { cause: abortError })` is a
+ * framework doing its job, and the outermost error has no trace of the abort
+ * left in it. Depth and cycles are bounded exactly as in `toSpanError`.
+ */
+export function isCancellation(thrown: unknown): boolean {
+  return detect(thrown, 0, new Set());
+}
+
+function detect(thrown: unknown, depth: number, seen: Set<object>): boolean {
+  if (typeof thrown !== "object" || thrown === null) return false;
+  if (seen.has(thrown)) return false;
+  seen.add(thrown);
+
+  const name = readString(thrown, "name");
+  if (name !== undefined && CANCELLATION_NAMES.has(name)) return true;
+
+  const code = readString(thrown, "code");
+  if (code !== undefined && CANCELLATION_CODES.has(code)) return true;
+
+  if (depth >= MAX_CAUSE_DEPTH) return false;
+
+  if (detect(read(thrown, "cause"), depth + 1, seen)) return true;
+
+  // An `AggregateError` counts only if *every* one of its failures was a
+  // cancellation. `Promise.any` across three providers where one was aborted
+  // and two returned garbage is a failure, and calling it a cancellation would
+  // hide the two that matter.
+  //
+  // Each element gets its own copy of the path, because the guard above is
+  // against cycles, not against seeing the same error twice: `Promise.any([p,
+  // p])` over one rejected promise puts one object in the list twice, and the
+  // second look must answer the same as the first.
+  const errors = read(thrown, "errors");
+  if (Array.isArray(errors) && errors.length > 0) {
+    return errors.every((each: unknown) =>
+      detect(each, depth + 1, new Set(seen)),
+    );
+  }
+
+  return false;
+}
+
+/**
  * A short description of a value for use in loomtrace's own `onError` messages.
  *
  * Not `SpanError` — this one ends up in a log line, not in a trace.

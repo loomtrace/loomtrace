@@ -3,6 +3,7 @@
  */
 
 export type {
+  AbortSignalLike,
   LoomSpan,
   LoomTraceApi,
   LoomTraceConfig,

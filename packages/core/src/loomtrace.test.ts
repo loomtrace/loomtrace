@@ -369,6 +369,46 @@ describe("LoomTrace — failures in the destination", () => {
     expect(tracer.run("both-broken", () => "value")).toBe("value");
   });
 
+  it("degrades to silence when the destination has no write method", () => {
+    const onError = vi.fn();
+    // What a framework passing a config object where a destination belongs
+    // gets: not a crash at construction, which would take down a program that
+    // only wanted a log.
+    const tracer = new LoomTrace({
+      destination: { type: "cloud", apiKey: "…" } as unknown as LoomDestination,
+      onError,
+    });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect((onError.mock.calls[0]![0] as Error).message).toMatch(
+      /no write\(\) method/,
+    );
+    expect(tracer.run("unrecorded", () => "value")).toBe("value");
+  });
+
+  it("swallows a rejecting flush and shutdown, naming each", async () => {
+    const onError = vi.fn();
+    const tracer = new LoomTrace({
+      destination: {
+        name: "broken",
+        write() {},
+        flush: () => Promise.reject(new Error("queue stuck")),
+        shutdown: () => Promise.reject(new Error("socket already gone")),
+      },
+      onError,
+    });
+
+    tracer.run("recorded", () => null);
+    await expect(tracer.flush()).resolves.toBeUndefined();
+    await expect(tracer.shutdown()).resolves.toBeUndefined();
+
+    expect(onError.mock.calls.map((call) => (call[0] as Error).message)).toEqual([
+      "broken.flush() failed: queue stuck",
+      "broken.flush() failed: queue stuck",
+      "broken.shutdown() failed: socket already gone",
+    ]);
+  });
+
   it("warns on console once by default", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const tracer = new LoomTrace({
@@ -434,6 +474,34 @@ describe("LoomTrace — flush and shutdown", () => {
     expect(destination.shutdown).toHaveBeenCalledTimes(1);
     expect(tracer.run("after", () => "value")).toBe("value");
     expect(destination.traces).toHaveLength(1);
+  });
+
+  it("keeps draining when a write hands over another trace", async () => {
+    const written: string[] = [];
+    const sleep = (ms: number): Promise<void> =>
+      new Promise((resolve) => setTimeout(resolve, ms));
+    // The destination has to be able to name the tracer that owns it, which
+    // does not exist yet at the point it is written.
+    const box: { tracer?: LoomTrace } = {};
+
+    // A destination that traces its own work — a plausible thing for one that
+    // uploads — is why `flush()` drains in a loop instead of awaiting one
+    // snapshot of what was in flight when it was called.
+    const tracer = new LoomTrace({
+      destination: {
+        write(trace) {
+          written.push(trace.name);
+          if (trace.name === "follow-up") return sleep(2);
+          return sleep(1).then(() => void box.tracer?.run("follow-up", () => null));
+        },
+      },
+    });
+    box.tracer = tracer;
+
+    tracer.run("first", () => null);
+    await tracer.flush();
+
+    expect(written).toEqual(["first", "follow-up"]);
   });
 
   it("resolves flush when there is no destination", async () => {
