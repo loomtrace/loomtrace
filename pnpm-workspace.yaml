@@ -1,0 +1,16 @@
+packages:
+  - packages/*
+  - examples/*
+
+# Single source of truth for shared tooling versions across the monorepo.
+# Packages reference these as "typescript": "catalog:".
+catalog:
+  "@types/node": ^26.1.2
+  tsup: ^8.5.1
+  typescript: ^6.0.3
+  vitest: ^4.1.10
+
+# esbuild ships a native binary and needs its postinstall script
+# (it backs both tsup and vitest).
+allowBuilds:
+  esbuild: true

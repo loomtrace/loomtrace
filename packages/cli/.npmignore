@@ -1,0 +1,9 @@
+# The "files" field in package.json is the primary allowlist.
+# This file is a second line of defence in case "files" is widened.
+src
+*.test.ts
+tsconfig.json
+tsup.config.ts
+vitest.config.ts
+.turbo
+coverage

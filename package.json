@@ -1,0 +1,36 @@
+{
+  "name": "loomtrace-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Monorepo for loomtrace — embeddable tracing for AI agent frameworks",
+  "license": "MIT",
+  "packageManager": "pnpm@11.17.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "ci": "pnpm run lint && turbo run typecheck build test",
+    "clean": "turbo run clean && rm -rf node_modules/.cache .turbo",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "turbo run build && changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.31.1",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "catalog:",
+    "eslint": "^10.8.0",
+    "tsup": "catalog:",
+    "turbo": "^2.10.7",
+    "typescript": "catalog:",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "catalog:"
+  }
+}
