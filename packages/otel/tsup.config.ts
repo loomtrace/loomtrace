@@ -9,5 +9,9 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   treeshake: true,
-  external: ["@loomtrace/core"],
+  external: [
+    "@loomtrace/core",
+    "@opentelemetry/api",
+    "@opentelemetry/sdk-trace-base",
+  ],
 });

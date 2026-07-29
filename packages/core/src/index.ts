@@ -12,6 +12,9 @@ export type {
   StepOptions,
 } from "./api.js";
 
+export { durationMs, formatTimestamp } from "./clock.js";
+export type { EpochNanos } from "./clock.js";
+
 export type { DestinationSpec, LoomDestination } from "./destinations/destination.js";
 
 export { LocalDestination } from "./destinations/local-destination.js";
