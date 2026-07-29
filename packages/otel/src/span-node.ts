@@ -1,16 +1,18 @@
 /**
- * Converting one OTel span into loomtrace's `SpanNode` — the structural,
- * format-agnostic half of the mapping (ids, timing, status, a generic
- * un-flattened `metadata`). Recognizing Vercel AI SDK's `gen_ai.*`/`ai.*`
- * conventions specifically — refining `type`, pulling `input`/`output` out
- * of attributes — is a separate, later refinement; nothing here reads an
- * attribute key by name.
+ * Converting one OTel span into loomtrace's `SpanNode`: ids, timing,
+ * status, a generic un-flattened `metadata` for whatever attributes are
+ * present, plus a `type`/`input`/`output` refinement for the two attribute
+ * conventions Vercel AI SDK's OTel bridge emits. Any span that matches
+ * neither convention still gets the structural mapping — recognizing
+ * `gen_ai.*`/`ai.*` is additive, not required.
  */
 
 import { SpanStatusCode } from "@opentelemetry/api";
+import type { Attributes } from "@opentelemetry/api";
 import type { ReadableSpan } from "@opentelemetry/sdk-trace-base";
 import type { SpanNode, SpanStatus, SpanType } from "@loomtrace/core";
 
+import { refineFromAiSdkAttributes } from "./ai-sdk.js";
 import { attributesToMetadata } from "./attributes.js";
 import { hrTimeDurationMs, hrTimeToTimestamp } from "./hrtime.js";
 import { spanErrorFromEvents } from "./span-error.js";
@@ -44,9 +46,17 @@ function readParentSpanId(span: ReadableSpan): string | null {
   return legacy ?? null;
 }
 
-/** `type` for a span this bridge has no richer classification for yet. */
+/** `type` for a span neither structural position nor attribute convention refines. */
 function defaultSpanType(parentId: string | null): SpanType {
   return parentId === null ? "run" : "step";
+}
+
+/** `attributes` with the keys a refinement already turned into `input`/`output` removed. */
+function withoutConsumedKeys(attributes: Attributes, consumedKeys: readonly string[]): Attributes {
+  if (consumedKeys.length === 0) return attributes;
+  const remaining = { ...attributes };
+  for (const key of consumedKeys) delete remaining[key];
+  return remaining;
 }
 
 /**
@@ -55,19 +65,24 @@ function defaultSpanType(parentId: string | null): SpanType {
 export function toSpanNode(span: ReadableSpan): SpanNode {
   const parentId = readParentSpanId(span);
   const status = STATUS_BY_CODE[span.status.code];
+  const refinement = refineFromAiSdkAttributes(span.attributes);
 
   const node: SpanNode = {
     id: span.spanContext().spanId,
     parentId,
     name: span.name,
-    type: defaultSpanType(parentId),
+    type: refinement?.type ?? defaultSpanType(parentId),
     startTime: hrTimeToTimestamp(span.startTime),
     endTime: hrTimeToTimestamp(span.endTime),
     durationMs: hrTimeDurationMs(span.startTime, span.endTime),
     status,
   };
 
-  const metadata = attributesToMetadata(span.attributes);
+  if (refinement?.input !== undefined) node.input = refinement.input;
+  if (refinement?.output !== undefined) node.output = refinement.output;
+
+  const remainingAttributes = withoutConsumedKeys(span.attributes, refinement?.consumedKeys ?? []);
+  const metadata = attributesToMetadata(remainingAttributes);
   if (metadata !== undefined) node.metadata = metadata;
   if (status === "error") node.error = spanErrorFromEvents(span);
 
@@ -86,11 +101,12 @@ export function toSpanNode(span: ReadableSpan): SpanNode {
  */
 export function toPendingSpanNode(span: ReadableSpan): SpanNode {
   const parentId = readParentSpanId(span);
+  const type = refineFromAiSdkAttributes(span.attributes)?.type ?? defaultSpanType(parentId);
   return {
     id: span.spanContext().spanId,
     parentId,
     name: span.name,
-    type: defaultSpanType(parentId),
+    type,
     startTime: hrTimeToTimestamp(span.startTime),
     status: "unset",
   };

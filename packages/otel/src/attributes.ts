@@ -15,7 +15,7 @@ import type { Attributes, AttributeValue } from "@opentelemetry/api";
 import type { JsonValue } from "@loomtrace/core";
 
 /** An OTel attribute value is already JSON-shaped, except `undefined` array entries. */
-function toJsonValue(value: AttributeValue): JsonValue {
+export function toJsonValue(value: AttributeValue): JsonValue {
   if (!Array.isArray(value)) return value;
   return value.map((entry) => entry ?? null);
 }

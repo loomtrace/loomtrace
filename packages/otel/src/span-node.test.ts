@@ -105,6 +105,35 @@ describe("toSpanNode — structural fields", () => {
   });
 });
 
+describe("toSpanNode — gen_ai.*/ai.* refinement", () => {
+  it("refines type and pulls input/output for a gen_ai chat span", () => {
+    const span = fakeSpan({
+      attributes: {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "gpt-5.4",
+        "gen_ai.input.messages": JSON.stringify([{ role: "user", content: "hi" }]),
+        "gen_ai.output.messages": JSON.stringify([{ role: "assistant", content: "hello" }]),
+      },
+    });
+
+    const node = toSpanNode(span);
+
+    expect(node.type).toBe("llm");
+    expect(node.input).toEqual([{ role: "user", content: "hi" }]);
+    expect(node.output).toEqual([{ role: "assistant", content: "hello" }]);
+    // The message payloads became `input`/`output` — they should not also
+    // sit in `metadata`, or every trace stores each message array twice.
+    expect(node.metadata).toEqual({
+      gen_ai: { operation: { name: "chat" }, request: { model: "gpt-5.4" } },
+    });
+  });
+
+  it("leaves the structural default type when no recognized convention is present", () => {
+    const span = fakeSpan({ attributes: { "http.method": "GET" } });
+    expect(toSpanNode(span).type).toBe("run");
+  });
+});
+
 describe("toPendingSpanNode", () => {
   it("builds an unset placeholder with no endTime or durationMs", () => {
     const span = fakeSpan({});
@@ -117,5 +146,15 @@ describe("toPendingSpanNode", () => {
       startTime: "2025-07-28T11:22:33.000000000Z",
       status: "unset",
     });
+  });
+
+  it("refines type from attributes already visible at onStart", () => {
+    const span = fakeSpan({
+      spanContext: () => ({ traceId: TRACE_ID, spanId: CHILD_SPAN_ID, traceFlags: 1 }),
+      parentSpanContext: { traceId: TRACE_ID, spanId: ROOT_SPAN_ID, traceFlags: 1 },
+      attributes: { "gen_ai.operation.name": "execute_tool" },
+    });
+
+    expect(toPendingSpanNode(span).type).toBe("tool");
   });
 });
