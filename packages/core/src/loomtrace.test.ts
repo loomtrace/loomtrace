@@ -523,3 +523,127 @@ describe("LoomTrace — flush and shutdown", () => {
     await expect(new LoomTrace().shutdown()).resolves.toBeUndefined();
   });
 });
+
+describe("LoomTrace — onSpanUpdate", () => {
+  it("is not required — a destination without it behaves exactly as before", () => {
+    const tracer = new LoomTrace({ destination: collector() });
+
+    expect(tracer.run("no-onSpanUpdate", () => "value")).toBe("value");
+  });
+
+  it("fires once per open and once per close, root and children alike", () => {
+    const updates: Array<{ name: string; status: string }> = [];
+    const tracer = new LoomTrace({
+      destination: {
+        write() {},
+        onSpanUpdate(span) {
+          updates.push({ name: span.name, status: span.status });
+        },
+      },
+    });
+
+    tracer.run("parent", () => {
+      tracer.step("child", () => "value");
+    });
+
+    expect(updates).toEqual([
+      { name: "parent", status: "unset" }, // parent opens
+      { name: "child", status: "unset" }, // child opens
+      { name: "child", status: "ok" }, // child closes
+      { name: "parent", status: "ok" }, // parent closes
+    ]);
+  });
+
+  it("hands over the trace as it stands so far, not the finished one", () => {
+    const seenSpanCounts: number[] = [];
+    const tracer = new LoomTrace({
+      destination: {
+        write() {},
+        onSpanUpdate(_span, trace) {
+          seenSpanCounts.push(trace.spans.length);
+        },
+      },
+    });
+
+    tracer.run("parent", () => {
+      tracer.step("child", () => "value");
+    });
+
+    // The parent's own open and close events see only the spans that exist at
+    // that moment, not the child that has not opened yet or the trace's final
+    // shape — this is a live view, not `write`'s finished snapshot.
+    expect(seenSpanCounts).toEqual([1, 2, 2, 2]);
+  });
+
+  it("swallows a synchronous throw without breaking the run", () => {
+    const onError = vi.fn();
+    const tracer = new LoomTrace({
+      destination: {
+        name: "live",
+        write() {},
+        onSpanUpdate() {
+          throw new Error("socket not ready");
+        },
+      },
+      onError,
+    });
+
+    expect(tracer.run("still-works", () => "value")).toBe("value");
+    expect(onError.mock.calls.map((call) => (call[0] as Error).message)).toEqual([
+      "live.onSpanUpdate() failed: socket not ready",
+      "live.onSpanUpdate() failed: socket not ready",
+    ]);
+  });
+
+  it("swallows a rejection without an unhandled rejection", async () => {
+    const onError = vi.fn();
+    const tracer = new LoomTrace({
+      destination: {
+        write() {},
+        async onSpanUpdate() {
+          throw new Error("upload failed");
+        },
+      },
+      onError,
+    });
+
+    tracer.run("rejects", () => null);
+    await tracer.flush();
+
+    expect(onError.mock.calls.map((call) => (call[0] as Error).message)).toEqual([
+      "destination.onSpanUpdate() failed: upload failed",
+      "destination.onSpanUpdate() failed: upload failed",
+    ]);
+  });
+
+  it("is awaited by flush(), same as write()", async () => {
+    const order: string[] = [];
+    let resolveUpdate: (() => void) | undefined;
+
+    const tracer = new LoomTrace({
+      destination: {
+        write() {},
+        // Called on open too, but nothing here awaits that one — only the
+        // close is worth controlling for this test.
+        onSpanUpdate: (span) => {
+          if (span.status === "unset") return undefined;
+          return new Promise<void>((resolve) => {
+            resolveUpdate = () => {
+              order.push("onSpanUpdate");
+              resolve();
+            };
+          });
+        },
+      },
+    });
+
+    tracer.run("slow-update", () => null);
+    const flushed = tracer.flush();
+
+    expect(order).toEqual([]);
+    resolveUpdate!();
+    await flushed;
+
+    expect(order).toEqual(["onSpanUpdate"]);
+  });
+});

@@ -527,6 +527,7 @@ interface LoomDestination {
   readonly name?: string;
   write(trace: TraceNode): void | Promise<void>;
   flush?(): Promise<void>;
+  onSpanUpdate?(span: SpanNode, trace: TraceNode): void | Promise<void>;
   shutdown?(): Promise<void>;
 }
 
@@ -575,13 +576,22 @@ requires `write`, so a config object is never mistaken for one.
    was dropped; loomtrace does not retry, and losing a trace is preferable to
    interfering with the program being traced.
 
-### 5.2 Whole traces, not a span stream
+### 5.2 Whole traces, not only a span stream
 
-The contract is trace-at-a-time. Incremental delivery — handing over each span
-as it closes, the way an OpenTelemetry `SpanProcessor.onEnd` does — matters for
-a process that dies mid-run and for live tailing, and neither is in scope yet.
-It arrives later as an additional *optional* method that existing destinations
-can ignore, which is exactly why the required surface is kept to `write` now.
+The contract started trace-at-a-time, with incremental delivery deferred: `write`
+is the only required method, called once, at the end. `onSpanUpdate` is the
+additional *optional* method that arrived later, exactly as anticipated —
+existing destinations that never implement it see nothing different, and
+`write` stays the one call every destination can rely on.
+
+It is called on every span this trace opens or closes, root included, with the
+trace as it stands so far — still growing, `status: "unset"`, no `endTime`.
+That object keeps mutating after the call returns, the same way the one handed
+to `write` does not, so a destination that needs a stable snapshot has to read
+what it needs before returning, exactly as `write` already requires. This is
+what makes both a process that might die mid-run and a live tailing view
+possible: the first no longer loses everything that had not reached `write`
+yet, and the second has something to redraw from before the run ends.
 
 ### 5.3 The two destinations shipped here
 
@@ -617,6 +627,17 @@ before doing anything else (§5.1) — a destination gets the optional lifecycle
 methods only if it buffers *beyond* what a single `write()` covers, which
 neither of these does.
 
+`LocalDestination` does implement `onSpanUpdate` (§5.2): every span rewrites
+the same `<dir>/<trace.id>.json`, whole, rather than appending — the file is
+small enough during development that rewriting beats maintaining a diff. Both
+`write` and `onSpanUpdate` go through one private helper that writes to a
+freshly-named temp file next to the target and then renames it into place,
+because a plain overwrite would let a reader — `loomtrace inspect --watch`
+chief among them — open the file mid-write. A rename swaps the directory entry
+in one step, so a concurrent reader always sees either the previous complete
+file or the next one, never a truncated one, no matter how often this runs
+while something is tailing it.
+
 ### 5.4 No process-exit hook — `flush()`/`shutdown()` are the whole answer
 
 Resolves item 4.4. loomtrace does not install `process.on("exit")`,
@@ -651,7 +672,7 @@ These are known gaps, not oversights. Each is scheduled.
 
 | Question | Settled in |
 | --- | --- |
-| Incremental span delivery, live tailing | later |
+| Incremental span delivery, live tailing | §5.2, §5.3 |
 | Manually-managed spans that outlive their function (streaming) | later |
 | Sampling, and truncating large `input`/`output` payloads | unscheduled |
 | Fanning one tracer out to several destinations at once | unscheduled |

@@ -530,6 +530,7 @@ export class LoomTrace implements LoomTraceApi {
     // Appended while it is still open, so a span that never closes is still in
     // the trace — as `status: "unset"`, which is more informative than a gap.
     trace.node.spans.push(node);
+    this.#emitSpanUpdate(node, trace.node);
 
     return new RecordingSpan(
       node,
@@ -668,14 +669,20 @@ export class LoomTrace implements LoomTraceApi {
       node.output = output as JsonValue;
     }
 
-    if (span.parentId !== null) return true;
-
     const trace = span.trace.node;
-    trace.endTime = endTime;
-    trace.durationMs = elapsedMs;
-    trace.status = status;
-    if (node.cancelled === true) trace.cancelled = true;
-    span.trace.sealed = true;
+    const isRoot = span.parentId === null;
+
+    if (isRoot) {
+      trace.endTime = endTime;
+      trace.durationMs = elapsedMs;
+      trace.status = status;
+      if (node.cancelled === true) trace.cancelled = true;
+      span.trace.sealed = true;
+    }
+
+    this.#emitSpanUpdate(node, trace);
+
+    if (!isRoot) return true;
 
     this.#emit(trace);
     return true;
@@ -694,18 +701,47 @@ export class LoomTrace implements LoomTraceApi {
       return;
     }
 
+    this.#track("write", pending);
+  }
+
+  /**
+   * Tell the destination about a span that just opened or closed, if it wants
+   * to know as it happens rather than only once, at the end.
+   */
+  #emitSpanUpdate(span: SpanNode, trace: TraceNode): void {
+    const destination = this.#destination;
+    if (!destination?.onSpanUpdate) return;
+
+    let pending: void | Promise<void>;
+    try {
+      // Called through `destination`, not as a bare reference to the method —
+      // otherwise a class-based destination loses its own `this` the moment it
+      // relies on any private state, exactly the way `LocalDestination` does.
+      pending = destination.onSpanUpdate(span, trace);
+    } catch (error) {
+      this.#report(error, "onSpanUpdate");
+      return;
+    }
+
+    this.#track("onSpanUpdate", pending);
+  }
+
+  /**
+   * Track a destination call's returned promise so `flush()` has something to
+   * await, attaching a handler immediately so a failure long after the call
+   * site returned cannot become an unhandled rejection in somebody else's
+   * process.
+   */
+  #track(method: string, pending: void | Promise<void>): void {
     if (!isThenable(pending)) return;
 
-    // Tracked so `flush()` has something to await, and attached to immediately
-    // so a slow write that fails long after `.run()` returned cannot become an
-    // unhandled rejection in somebody else's process.
     const settled = Promise.resolve(pending).then(
       () => {
         this.#inFlight.delete(settled);
       },
       (error: unknown) => {
         this.#inFlight.delete(settled);
-        this.#report(error, "write");
+        this.#report(error, method);
       },
     );
     this.#inFlight.add(settled);

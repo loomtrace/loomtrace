@@ -1,7 +1,7 @@
 import { describe, expectTypeOf, it } from "vitest";
 
 import type { DestinationSpec, LoomDestination } from "./destination.js";
-import type { TraceNode } from "../schema.js";
+import type { SpanNode, TraceNode } from "../schema.js";
 
 /**
  * These are type assertions, not behaviour tests — `destination.ts` has no
@@ -70,6 +70,26 @@ describe("LoomDestination", () => {
       flush() {},
     };
     void syncFlush;
+  });
+
+  it("makes onSpanUpdate optional, keeps it sync-or-async, and hands it the span plus its trace", () => {
+    const withoutIt = { write() {} } satisfies LoomDestination;
+    const sync = {
+      write() {},
+      onSpanUpdate(_span: SpanNode, _trace: TraceNode): void {},
+    } satisfies LoomDestination;
+    const async = {
+      write() {},
+      async onSpanUpdate(_span: SpanNode, _trace: TraceNode): Promise<void> {},
+    } satisfies LoomDestination;
+
+    expectTypeOf(withoutIt).toExtend<LoomDestination>();
+    expectTypeOf(sync).toExtend<LoomDestination>();
+    expectTypeOf(async).toExtend<LoomDestination>();
+
+    type OnSpanUpdate = NonNullable<LoomDestination["onSpanUpdate"]>;
+    expectTypeOf<OnSpanUpdate>().returns.toEqualTypeOf<void | Promise<void>>();
+    expectTypeOf<OnSpanUpdate>().parameters.toEqualTypeOf<[SpanNode, TraceNode]>();
   });
 });
 

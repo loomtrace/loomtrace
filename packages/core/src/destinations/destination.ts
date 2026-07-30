@@ -13,7 +13,7 @@
  * implement it, items 4.1 and 4.2.
  */
 
-import type { TraceNode } from "../schema.js";
+import type { SpanNode, TraceNode } from "../schema.js";
 
 /**
  * A sink for finished traces.
@@ -60,6 +60,25 @@ export interface LoomDestination {
    * Omit it if `write` already finishes the job.
    */
   flush?(): Promise<void>;
+
+  /**
+   * Called on every span this trace opens or closes, including the root —
+   * not just once at the end.
+   *
+   * `write` stays the one required, final call: a destination that ignores
+   * `onSpanUpdate` sees exactly what it saw before this existed. Implement it
+   * when a whole trace arriving only at the end is not good enough — a
+   * process that might be killed mid-run, or a live view that wants to redraw
+   * as spans complete.
+   *
+   * `trace` is the same object `write` will eventually receive, at whatever
+   * point it has reached so far: still growing, `status: "unset"`, no
+   * `endTime` yet. It keeps growing after this call returns, so a destination
+   * that needs a stable snapshot has to read what it needs before returning —
+   * synchronously, or via something like `JSON.stringify` called immediately —
+   * the same discipline `write` itself already requires.
+   */
+  onSpanUpdate?(span: SpanNode, trace: TraceNode): void | Promise<void>;
 
   /**
    * Flush, then release resources — file handles, sockets, timers.

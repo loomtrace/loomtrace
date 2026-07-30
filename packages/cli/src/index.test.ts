@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { run } from "./index.js";
+import { parseInspectArgs, run } from "./index.js";
 import type { TraceNode } from "@loomtrace/core";
 
 describe("@loomtrace/cli", () => {
@@ -141,6 +141,36 @@ describe("@loomtrace/cli", () => {
         expect(result.exitCode).toBe(1);
         expect(result.stdout).toContain("no such file");
       });
+    });
+
+    describe("--watch", () => {
+      it("declines rather than doing a one-shot render, since run() only ever returns once", () => {
+        const path = join(dir, "trace.json");
+
+        const result = run(["inspect", path, "--watch"]);
+
+        expect(result.exitCode).toBe(1);
+        expect(result.stdout).toContain("--watch");
+      });
+    });
+  });
+});
+
+describe("parseInspectArgs", () => {
+  it("returns undefined when there is no positional <path>", () => {
+    expect(parseInspectArgs(["--json"])).toBeUndefined();
+  });
+
+  it("finds <path> regardless of where the flags land", () => {
+    expect(parseInspectArgs(["trace.json", "--json", "--watch"])).toEqual({
+      path: "trace.json",
+      json: true,
+      watch: true,
+    });
+    expect(parseInspectArgs(["--watch", "trace.json"])).toEqual({
+      path: "trace.json",
+      json: false,
+      watch: true,
     });
   });
 });

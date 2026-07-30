@@ -104,6 +104,51 @@ describe("LocalDestination", () => {
     }
   });
 
+  it("leaves no temp file behind after write() settles", async () => {
+    const destination = new LocalDestination({ dir });
+    await destination.write(trace("a".repeat(32)));
+
+    const files = await readdir(dir);
+    expect(files).toEqual([`${"a".repeat(32)}.json`]);
+  });
+
+  describe("onSpanUpdate", () => {
+    it("writes the trace as it stands so far, to the same file write() would use", async () => {
+      const destination = new LocalDestination({ dir });
+      const inProgress = trace("a".repeat(32));
+
+      await destination.onSpanUpdate(inProgress.spans[0]!, inProgress);
+
+      const raw = await readFile(join(dir, `${inProgress.id}.json`), "utf8");
+      expect(JSON.parse(raw)).toEqual(inProgress);
+    });
+
+    it("is overwritten by a later write() for the same trace", async () => {
+      const destination = new LocalDestination({ dir });
+      const id = "a".repeat(32);
+      const { endTime: _endTime, durationMs: _durationMs, ...rest } = trace(id);
+      const inProgress: TraceNode = { ...rest, status: "unset" };
+
+      await destination.onSpanUpdate(inProgress.spans[0]!, inProgress);
+      await destination.write(trace(id));
+
+      const raw = await readFile(join(dir, `${id}.json`), "utf8");
+      expect(JSON.parse(raw)).toEqual(trace(id));
+    });
+
+    it("tolerates overlapping updates for the same trace, leaving no temp file behind", async () => {
+      const destination = new LocalDestination({ dir });
+      const written = trace("a".repeat(32));
+
+      await Promise.all(
+        Array.from({ length: 10 }, () => destination.onSpanUpdate(written.spans[0]!, written)),
+      );
+
+      const files = await readdir(dir);
+      expect(files).toEqual([`${written.id}.json`]);
+    });
+  });
+
   it("resolves a relative dir against process.cwd() at construction time", async () => {
     const cwd = vi.spyOn(process, "cwd").mockReturnValue(dir);
 
