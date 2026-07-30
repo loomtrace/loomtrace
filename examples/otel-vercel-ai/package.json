@@ -1,0 +1,29 @@
+{
+  "name": "otel-vercel-ai-example",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Example of tracing Vercel AI SDK calls with @loomtrace/otel, no code changes to the agent itself.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/otel": "^1.0.42",
+    "@loomtrace/core": "workspace:^",
+    "@loomtrace/otel": "workspace:^",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/sdk-trace-node": "^2.10.0",
+    "ai": "^7.0.42",
+    "zod": "^4.1.8"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsx": "^4.23.1",
+    "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
