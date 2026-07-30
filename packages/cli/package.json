@@ -1,6 +1,6 @@
 {
   "name": "@loomtrace/cli",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Terminal viewer for loomtrace traces: npx loomtrace inspect <path>.",
   "license": "MIT",
   "type": "module",
@@ -16,7 +16,11 @@
   "bin": {
     "loomtrace": "./dist/cli.js"
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
@@ -38,5 +42,11 @@
   "publishConfig": {
     "access": "public"
   },
-  "keywords": ["cli", "tracing", "ai", "agents", "observability"]
+  "keywords": [
+    "cli",
+    "tracing",
+    "ai",
+    "agents",
+    "observability"
+  ]
 }

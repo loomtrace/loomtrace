@@ -1,6 +1,6 @@
 {
   "name": "@loomtrace/otel",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "OpenTelemetry bridge: OTel spans → loomtrace trace format.",
   "license": "MIT",
   "type": "module",
@@ -16,7 +16,11 @@
     },
     "./package.json": "./package.json"
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
@@ -46,5 +50,11 @@
   "publishConfig": {
     "access": "public"
   },
-  "keywords": ["opentelemetry", "otel", "tracing", "ai", "agents"]
+  "keywords": [
+    "opentelemetry",
+    "otel",
+    "tracing",
+    "ai",
+    "agents"
+  ]
 }

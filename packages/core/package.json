@@ -1,6 +1,6 @@
 {
   "name": "@loomtrace/core",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Tracing protocol for AI agent frameworks: run/step API, span tree, destinations.",
   "license": "MIT",
   "type": "module",
@@ -16,7 +16,12 @@
     },
     "./package.json": "./package.json"
   },
-  "files": ["dist", "DESIGN.md", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "DESIGN.md",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
@@ -35,5 +40,11 @@
   "publishConfig": {
     "access": "public"
   },
-  "keywords": ["ai", "agents", "tracing", "observability", "llm"]
+  "keywords": [
+    "ai",
+    "agents",
+    "tracing",
+    "observability",
+    "llm"
+  ]
 }
