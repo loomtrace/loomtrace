@@ -1,0 +1,23 @@
+{
+  "name": "basic-node-example",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Minimal example of using @loomtrace/core directly, without OpenTelemetry.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@loomtrace/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsx": "^4.23.1",
+    "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
