@@ -91,5 +91,56 @@ describe("@loomtrace/cli", () => {
 
       expect(result.stdout).not.toContain("\x1b[");
     });
+
+    describe("--json", () => {
+      const trace: TraceNode = {
+        schemaVersion: 0,
+        id: "d".repeat(32),
+        name: "my agent",
+        startTime: "2026-07-29T00:00:00.000000000Z",
+        endTime: "2026-07-29T00:00:00.500000000Z",
+        durationMs: 500,
+        status: "ok",
+        spans: [
+          {
+            id: "root",
+            parentId: null,
+            name: "my agent",
+            type: "run",
+            startTime: "2026-07-29T00:00:00.000000000Z",
+            endTime: "2026-07-29T00:00:00.500000000Z",
+            durationMs: 500,
+            status: "ok",
+          },
+        ],
+      };
+
+      it("prints the raw trace as pretty-printed JSON instead of the tree", async () => {
+        const path = join(dir, "trace.json");
+        await writeFile(path, JSON.stringify(trace));
+
+        const result = run(["inspect", path, "--json"]);
+
+        expect(result.exitCode).toBe(0);
+        expect(JSON.parse(result.stdout)).toEqual(trace);
+        expect(result.stdout).not.toContain("├─");
+      });
+
+      it("accepts --json before the path", async () => {
+        const path = join(dir, "trace.json");
+        await writeFile(path, JSON.stringify(trace));
+
+        const result = run(["inspect", "--json", path]);
+
+        expect(result.exitCode).toBe(0);
+        expect(JSON.parse(result.stdout)).toEqual(trace);
+      });
+
+      it("still reports read errors instead of raw JSON", () => {
+        const result = run(["inspect", join(dir, "missing.json"), "--json"]);
+        expect(result.exitCode).toBe(1);
+        expect(result.stdout).toContain("no such file");
+      });
+    });
   });
 });

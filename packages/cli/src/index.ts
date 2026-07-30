@@ -24,7 +24,7 @@ export function run(argv: readonly string[], options: CliOptions = DEFAULT_OPTIO
     return { exitCode: 0, stdout: usage() };
   }
   if (argv[0] === "inspect") {
-    return inspect(argv[1], options);
+    return inspect(argv.slice(1), options);
   }
   return {
     exitCode: 1,
@@ -32,7 +32,10 @@ export function run(argv: readonly string[], options: CliOptions = DEFAULT_OPTIO
   };
 }
 
-function inspect(path: string | undefined, options: CliOptions): CliResult {
+function inspect(args: readonly string[], options: CliOptions): CliResult {
+  const path = args.find((arg) => !arg.startsWith("-"));
+  const json = args.includes("--json");
+
   if (!path) {
     return { exitCode: 1, stdout: `loomtrace inspect: missing <path>\n\n${usage()}` };
   }
@@ -42,6 +45,9 @@ function inspect(path: string | undefined, options: CliOptions): CliResult {
     return { exitCode: 1, stdout: `loomtrace inspect: ${result.message}\n` };
   }
 
+  if (json) {
+    return { exitCode: 0, stdout: JSON.stringify(result.trace, null, 2) + "\n" };
+  }
   return { exitCode: 0, stdout: renderTrace(result.trace, options) };
 }
 
@@ -50,7 +56,8 @@ function usage(): string {
     "loomtrace — terminal viewer for AI agent traces",
     "",
     "Usage:",
-    "  loomtrace inspect <path>   inspect a trace JSON file",
+    "  loomtrace inspect <path>           inspect a trace JSON file",
+    "  loomtrace inspect <path> --json    print the trace as raw JSON",
     "",
   ].join("\n");
 }
